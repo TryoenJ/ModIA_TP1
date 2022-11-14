@@ -12,9 +12,11 @@ from tqdm import tqdm
 
 from mnist_net import MNISTNet
 
+from torch.utils.tensorboard import SummaryWriter
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def train(net, optimizer, loader, epochs=10):
+def train(net, optimizer, loader, writer, epochs=10):
     criterion = nn.CrossEntropyLoss()
     for epoch in range(epochs):
         running_loss = []
@@ -28,6 +30,8 @@ def train(net, optimizer, loader, epochs=10):
             loss.backward()
             optimizer.step()
             t.set_description(f'training loss: {mean(running_loss)}')
+        writer.add_scalar('training loss', mean(running_loss), epoch)
+
 
 def test(model, dataloader):
     test_corrects = 0
@@ -43,18 +47,20 @@ def test(model, dataloader):
 
 if __name__=='__main__':
 
+  writer = SummaryWriter(f'runs/MNIST')    
+
   parser = argparse.ArgumentParser()
   
   parser.add_argument('--exp_name', type=str, default = 'MNIST', help='experiment name')
-  parser.add_argument(...)
-  parser.add_argument(...)
-  parser.add_argument(...)
+  parser.add_argument('--epochs', type=int, default = 10, help='experiment name')
+  parser.add_argument('--batch_size', type=int, default = 128, help='experiment name')
+  parser.add_argument('--lr', type=float, default = 1e-3, help='experiment name')
 
   args = parser.parse_args()
   exp_name = args.exp_name
-  epochs = ...
-  batch_size = ...
-  lr = ...
+  epochs = args.epochs
+  batch_size = args.batch_size
+  lr = args.lr
 
   # transforms
   transform = transforms.Compose(
@@ -69,12 +75,30 @@ if __name__=='__main__':
   trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
   testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
   
-  net = ...
+  net = MNISTNet()
   # setting net on device(GPU if available, else CPU)
   net = net.to(device)
-  optimizer = optim.SGD(...)
+  
+  lr = 1e-3
+  optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9)
 
-  train(...)
-  test_acc = test(...)
+  train(net, optimizer, trainloader, writer, 10)
+  test_acc = test(net, testloader)
   print(f'Test accuracy:{test_acc}')
   torch.save(net.state_dict(), "mnist_net.pth")
+  
+  #add embeddings to tensorboard
+  perm = torch.randperm(len(trainset.data))
+  images, labels = trainset.data[perm][:256], trainset.targets[perm][:256]
+  images = images.unsqueeze(1).float().to(device)
+  with torch.no_grad():
+    embeddings = net.get_features(images)
+    writer.add_embedding(embeddings,
+                  metadata=labels,
+                  label_img=images, global_step=1)
+
+  # save networks computational graph in tensorboard
+  writer.add_graph(net, images)
+  # save a dataset sample in tensorboard
+  img_grid = torchvision.utils.make_grid(images[:64])
+  writer.add_image('mnist_images', img_grid)
